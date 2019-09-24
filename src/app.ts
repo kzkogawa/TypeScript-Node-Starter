@@ -3,15 +3,11 @@ import compression from "compression";  // compresses requests
 import session from "express-session";
 import bodyParser from "body-parser";
 import lusca from "lusca";
-import mongo from "connect-mongo";
 import flash from "express-flash";
 import path from "path";
-import mongoose from "mongoose";
 import passport from "passport";
-import bluebird from "bluebird";
-import { MONGODB_URI, SESSION_SECRET } from "./util/secrets";
 
-const MongoStore = mongo(session);
+import { SESSION_SECRET } from "./util/secrets";
 
 // Controllers (route handlers)
 import * as homeController from "./controllers/home";
@@ -19,22 +15,17 @@ import * as userController from "./controllers/user";
 import * as apiController from "./controllers/api";
 import * as contactController from "./controllers/contact";
 
-
 // API keys and Passport configuration
 import * as passportConfig from "./config/passport";
+import { database } from "./models/sequelize/init_database";
+import logger from "./util/logger";
 
 // Create Express server
 const app = express();
 
-// Connect to MongoDB
-const mongoUrl = MONGODB_URI;
-mongoose.Promise = bluebird;
-
-mongoose.connect(mongoUrl, { useNewUrlParser: true, useCreateIndex: true } ).then(
-    () => { /** ready to use. The `mongoose.connect()` promise resolves to undefined. */ },
-).catch(err => {
-    console.log("MongoDB connection error. Please make sure MongoDB is running. " + err);
-    // process.exit();
+// Connect to DB
+database.authenticate().error((err: string) => {
+    logger.error(err);
 });
 
 // Express configuration
@@ -47,11 +38,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(session({
     resave: true,
     saveUninitialized: true,
-    secret: SESSION_SECRET,
-    store: new MongoStore({
-        url: mongoUrl,
-        autoReconnect: true
-    })
+    secret: SESSION_SECRET
 }));
 app.use(passport.initialize());
 app.use(passport.session());
@@ -65,13 +52,13 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
     // After successful login, redirect back to the intended page
     if (!req.user &&
-    req.path !== "/login" &&
-    req.path !== "/signup" &&
-    !req.path.match(/^\/auth/) &&
-    !req.path.match(/\./)) {
+        req.path !== "/login" &&
+        req.path !== "/signup" &&
+        !req.path.match(/^\/auth/) &&
+        !req.path.match(/\./)) {
         req.session.returnTo = req.path;
     } else if (req.user &&
-    req.path == "/account") {
+        req.path == "/account") {
         req.session.returnTo = req.path;
     }
     next();

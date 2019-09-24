@@ -2,12 +2,13 @@ import async from "async";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import passport from "passport";
-import { User, UserDocument, AuthToken } from "../models/User";
+import { User } from "../models/sequelize/User";
+import { AuthToken } from "../models/sequelize/AuthToken";
 import { Request, Response, NextFunction } from "express";
 import { IVerifyOptions } from "passport-local";
-import { WriteError } from "mongodb";
 import { check, sanitize, validationResult } from "express-validator";
 import "../config/passport";
+import { Op } from "sequelize";
 
 /**
  * GET /login
@@ -28,7 +29,7 @@ export const getLogin = (req: Request, res: Response) => {
  */
 export const postLogin = (req: Request, res: Response, next: NextFunction) => {
     check("email", "Email is not valid").isEmail();
-    check("password", "Password cannot be blank").isLength({min: 1});
+    check("password", "Password cannot be blank").isLength({ min: 1 });
     // eslint-disable-next-line @typescript-eslint/camelcase
     sanitize("email").normalizeEmail({ gmail_remove_dots: false });
 
@@ -39,10 +40,10 @@ export const postLogin = (req: Request, res: Response, next: NextFunction) => {
         return res.redirect("/login");
     }
 
-    passport.authenticate("local", (err: Error, user: UserDocument, info: IVerifyOptions) => {
+    passport.authenticate("local", (err: Error, user: User, info: IVerifyOptions) => {
         if (err) { return next(err); }
         if (!user) {
-            req.flash("errors", {msg: info.message});
+            req.flash("errors", { msg: info.message });
             return res.redirect("/login");
         }
         req.logIn(user, (err) => {
@@ -98,22 +99,24 @@ export const postSignup = (req: Request, res: Response, next: NextFunction) => {
         password: req.body.password
     });
 
-    User.findOne({ email: req.body.email }, (err, existingUser) => {
-        if (err) { return next(err); }
+    User.findOne({
+        where: {
+            email: req.body.email
+        }
+    }).then(existingUser => {
         if (existingUser) {
             req.flash("errors", { msg: "Account with that email address already exists." });
             return res.redirect("/signup");
         }
-        user.save((err) => {
-            if (err) { return next(err); }
-            req.logIn(user, (err) => {
+        user.save().then(_user => {
+            req.logIn(_user, (err) => {
                 if (err) {
                     return next(err);
                 }
                 res.redirect("/");
             });
-        });
-    });
+        }).error(err => next(err));
+    }).error(err => next(err));
 };
 
 /**
@@ -141,26 +144,24 @@ export const postUpdateProfile = (req: Request, res: Response, next: NextFunctio
         req.flash("errors", errors.array());
         return res.redirect("/account");
     }
-
-    User.findById(req.user.id, (err, user: UserDocument) => {
-        if (err) { return next(err); }
+    const rUser = req.user as User;
+    User.findByPk(rUser.id).then(user => {
         user.email = req.body.email || "";
         user.profile.name = req.body.name || "";
         user.profile.gender = req.body.gender || "";
         user.profile.location = req.body.location || "";
         user.profile.website = req.body.website || "";
-        user.save((err: WriteError) => {
-            if (err) {
-                if (err.code === 11000) {
-                    req.flash("errors", { msg: "The email address you have entered is already associated with an account." });
-                    return res.redirect("/account");
-                }
-                return next(err);
-            }
+        user.save().then(_user => {
             req.flash("success", { msg: "Profile information has been updated." });
             res.redirect("/account");
+        }).error(err => {
+            if (err.code === 11000) {
+                req.flash("errors", { msg: "The email address you have entered is already associated with an account." });
+                return res.redirect("/account");
+            }
+            next(err);
         });
-    });
+    }).error(err => next(err));
 };
 
 /**
@@ -177,16 +178,15 @@ export const postUpdatePassword = (req: Request, res: Response, next: NextFuncti
         req.flash("errors", errors.array());
         return res.redirect("/account");
     }
-
-    User.findById(req.user.id, (err, user: UserDocument) => {
-        if (err) { return next(err); }
-        user.password = req.body.password;
-        user.save((err: WriteError) => {
-            if (err) { return next(err); }
+    const rUser = req.user as User;
+    User.findByPk(rUser.id).then(user => {
+        user.update({
+            password: req.body.password
+        }).then(_user => {
             req.flash("success", { msg: "Password has been changed." });
             res.redirect("/account");
-        });
-    });
+        }).error(err => next(err));
+    }).error(err => next(err));
 };
 
 /**
@@ -194,12 +194,16 @@ export const postUpdatePassword = (req: Request, res: Response, next: NextFuncti
  * Delete user account.
  */
 export const postDeleteAccount = (req: Request, res: Response, next: NextFunction) => {
-    User.remove({ _id: req.user.id }, (err) => {
-        if (err) { return next(err); }
+    const rUser = req.user as User;
+    User.destroy({
+        where: {
+            id: rUser.id
+        }
+    }).then(result => {
         req.logout();
         req.flash("info", { msg: "Your account has been deleted." });
         res.redirect("/");
-    });
+    }).error(err => next(err));
 };
 
 /**
@@ -208,16 +212,18 @@ export const postDeleteAccount = (req: Request, res: Response, next: NextFunctio
  */
 export const getOauthUnlink = (req: Request, res: Response, next: NextFunction) => {
     const provider = req.params.provider;
-    User.findById(req.user.id, (err, user: any) => {
-        if (err) { return next(err); }
-        user[provider] = undefined;
-        user.tokens = user.tokens.filter((token: AuthToken) => token.kind !== provider);
-        user.save((err: WriteError) => {
-            if (err) { return next(err); }
-            req.flash("info", { msg: `${provider} account has been unlinked.` });
-            res.redirect("/account");
-        });
-    });
+    const rUser = req.user as User;
+    AuthToken.destroy({
+        where: {
+            userId: rUser.id,
+            kind: {
+                [Op.not]: provider
+            }
+        }
+    }).then(result => {
+        req.flash("info", { msg: `${provider} account has been unlinked.` });
+        res.redirect("/account");
+    }).error(err => next(err));
 };
 
 /**
@@ -228,19 +234,22 @@ export const getReset = (req: Request, res: Response, next: NextFunction) => {
     if (req.isAuthenticated()) {
         return res.redirect("/");
     }
-    User
-        .findOne({ passwordResetToken: req.params.token })
-        .where("passwordResetExpires").gt(Date.now())
-        .exec((err, user) => {
-            if (err) { return next(err); }
-            if (!user) {
-                req.flash("errors", { msg: "Password reset token is invalid or has expired." });
-                return res.redirect("/forgot");
+    User.findOne({
+        where: {
+            passwordResetToken: req.params.token,
+            passwordResetExpires: {
+                [Op.gt]: Date.now()
             }
-            res.render("account/reset", {
-                title: "Password Reset"
-            });
+        }
+    }).then(user => {
+        if (!user) {
+            req.flash("errors", { msg: "Password reset token is invalid or has expired." });
+            return res.redirect("/forgot");
+        }
+        res.render("account/reset", {
+            title: "Password Reset"
         });
+    }).error(err => next(err));
 };
 
 /**
@@ -260,27 +269,30 @@ export const postReset = (req: Request, res: Response, next: NextFunction) => {
 
     async.waterfall([
         function resetPassword(done: Function) {
-            User
-                .findOne({ passwordResetToken: req.params.token })
-                .where("passwordResetExpires").gt(Date.now())
-                .exec((err, user: any) => {
-                    if (err) { return next(err); }
-                    if (!user) {
-                        req.flash("errors", { msg: "Password reset token is invalid or has expired." });
-                        return res.redirect("back");
+            User.findOne({
+                where: {
+                    passwordResetToken: req.params.token,
+                    passwordResetExpires: {
+                        [Op.gt]: Date.now()
                     }
-                    user.password = req.body.password;
-                    user.passwordResetToken = undefined;
-                    user.passwordResetExpires = undefined;
-                    user.save((err: WriteError) => {
-                        if (err) { return next(err); }
-                        req.logIn(user, (err) => {
-                            done(err, user);
-                        });
+                }
+            }).then(user => {
+                if (!user) {
+                    req.flash("errors", { msg: "Password reset token is invalid or has expired." });
+                    return res.redirect("/forgot");
+                }
+                user.update({
+                    password: req.body.password,
+                    passwordResetToken: null,
+                    passwordResetExpires: null
+                }).then(_user => {
+                    req.logIn(user, (err) => {
+                        done(err, user);
                     });
-                });
+                }).error(err => next(err));
+            }).error(err => next(err));
         },
-        function sendResetPasswordEmail(user: UserDocument, done: Function) {
+        function sendResetPasswordEmail(user: User, done: Function) {
             const transporter = nodemailer.createTransport({
                 service: "SendGrid",
                 auth: {
@@ -342,20 +354,24 @@ export const postForgot = (req: Request, res: Response, next: NextFunction) => {
             });
         },
         function setRandomToken(token: AuthToken, done: Function) {
-            User.findOne({ email: req.body.email }, (err, user: any) => {
-                if (err) { return done(err); }
+            User.findOne({
+                where: {
+                    email: req.body.email
+                }
+            }).then(user => {
                 if (!user) {
                     req.flash("errors", { msg: "Account with that email address does not exist." });
                     return res.redirect("/forgot");
                 }
-                user.passwordResetToken = token;
-                user.passwordResetExpires = Date.now() + 3600000; // 1 hour
-                user.save((err: WriteError) => {
-                    done(err, token, user);
-                });
-            });
+                user.update({
+                    passwordResetToken: token,
+                    passwordResetExpires: Date.now() + 3600000 // 1 hour
+                }).then(_user => {
+                    done(null, token, _user);
+                }).error(err => done(err));
+            }).error(err => done(err));
         },
-        function sendForgotPasswordEmail(token: AuthToken, user: UserDocument, done: Function) {
+        function sendForgotPasswordEmail(token: AuthToken, user: User, done: Function) {
             const transporter = nodemailer.createTransport({
                 service: "SendGrid",
                 auth: {
