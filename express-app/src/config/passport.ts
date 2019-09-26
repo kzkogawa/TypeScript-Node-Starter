@@ -90,17 +90,17 @@ passport.use(new FacebookStrategy({
                     req.flash("errors", { msg: err });
                     return done(err);
                 }
-                const user: any = new User();
-                user.email = profile._json.email;
-                user.facebook = profile.id;
-                user.tokens.push({ kind: "facebook", accessToken });
-                user.profile.name = `${profile.name.givenName} ${profile.name.familyName}`;
-                user.profile.gender = profile._json.gender;
-                user.profile.picture = `https://graph.facebook.com/${profile.id}/picture?type=large`;
-                user.profile.location = (profile._json.location) ? profile._json.location.name : "";
-                user.save((err: Error) => {
-                    done(err, user);
-                });
+                User.create({
+                    email: profile._json.email,
+                    facebook: profile.id,
+                    tokens: [{ kind: "facebook", accessToken }],
+                    profile: {
+                        name: `${profile.name.givenName} ${profile.name.familyName}`,
+                        gender: profile._json.gender,
+                        picture: `https://graph.facebook.com/${profile.id}/picture?type=large`,
+                        location: (profile._json.location) ? profile._json.location.name : "",
+                    }
+                }).then(user => done(null, user)).error(err => done(err));
             }).error(err => done(err));
         }
     }).error(err => done(err));
