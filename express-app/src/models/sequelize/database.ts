@@ -1,9 +1,12 @@
-import { DataTypes } from "sequelize";
+import { Sequelize, DataTypes } from "sequelize";
 
+import { DB_URI } from "../../util/secrets";
 import { AuthToken } from "./AuthToken";
 import { User } from "./User";
 import { Profile } from "./Profile";
-import { database } from "../../app";
+
+
+const database = new Sequelize(DB_URI);
 
 // https://sequelize.org/master/manual/typescript.html
 
@@ -73,4 +76,5 @@ User.hasOne(Profile, {
     sourceKey: "id",
     foreignKey: "userId"
 });
-database.sync();
+
+export default database;

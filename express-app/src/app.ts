@@ -8,7 +8,6 @@ import path from "path";
 import passport from "passport";
 
 import { SESSION_SECRET } from "./util/secrets";
-import { DB_URI } from "./util/secrets";
 
 // Controllers (route handlers)
 import * as homeController from "./controllers/home";
@@ -18,14 +17,13 @@ import * as contactController from "./controllers/contact";
 
 // API keys and Passport configuration
 import * as passportConfig from "./config/passport";
-import { Sequelize } from "sequelize";
 import logger from "./util/logger";
+import database from "./models/sequelize/database";
 
 // Create Express server
 const app = express();
 
 // Connect to DB
-export const database = new Sequelize(DB_URI);
 database.authenticate().error((err: string) => {
     logger.error(err);
 });
