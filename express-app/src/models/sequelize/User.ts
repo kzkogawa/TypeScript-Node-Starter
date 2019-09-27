@@ -1,12 +1,12 @@
 import bcrypt from "bcrypt-nodejs";
 import crypto from "crypto";
 
-import { Model } from "sequelize";
+import { Model, HasManyCreateAssociationMixin, HasOneCreateAssociationMixin } from "sequelize";
 import { AuthToken } from "./AuthToken";
 import { Profile } from "./Profile";
 
 export class User extends Model {
-    public id: string;
+    public id!: string;
     public email: string;
     public password: string;
     public passwordResetToken: string;
@@ -16,6 +16,9 @@ export class User extends Model {
     public tokens: AuthToken[];
 
     public profile: Profile;
+
+    public createProfile!: HasOneCreateAssociationMixin<Profile>;
+    public createAuthToken!: HasManyCreateAssociationMixin<AuthToken>;
     public static hashPassword(password: string) {
         return bcrypt.hashSync(password, bcrypt.genSaltSync(10));
     }

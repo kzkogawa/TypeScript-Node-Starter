@@ -2,13 +2,16 @@ import async from "async";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import passport from "passport";
-import { User } from "../models/sequelize/User";
-import { AuthToken } from "../models/sequelize/AuthToken";
 import { Request, Response, NextFunction } from "express";
 import { IVerifyOptions } from "passport-local";
 import { check, sanitize, validationResult } from "express-validator";
-import "../config/passport";
 import { Op } from "sequelize";
+
+import { User } from "../models/sequelize/User";
+import { Profile } from "../models/sequelize/Profile";
+import { AuthToken } from "../models/sequelize/AuthToken";
+import "../config/passport";
+import logger from "../util/logger";
 
 /**
  * GET /login
@@ -105,8 +108,9 @@ export const postSignup = (req: Request, res: Response, next: NextFunction) => {
         }
         User.create({
             email: req.body.email,
-            password: req.body.password
-        }).then(_user => {
+            password: User.hashPassword(req.body.password)
+        }).then(async _user => {
+            await _user.createProfile({});
             req.logIn(_user, (err) => {
                 if (err) {
                     return next(err);
@@ -143,22 +147,27 @@ export const postUpdateProfile = (req: Request, res: Response, next: NextFunctio
         return res.redirect("/account");
     }
     const rUser = req.user as User;
-    User.findByPk(rUser.id).then(user => {
-        user.email = req.body.email || "";
-        user.profile.name = req.body.name || "";
-        user.profile.gender = req.body.gender || "";
-        user.profile.location = req.body.location || "";
-        user.profile.website = req.body.website || "";
-        user.save().then(_user => {
-            req.flash("success", { msg: "Profile information has been updated." });
-            res.redirect("/account");
-        }).error(err => {
-            if (err.code === 11000) {
+    User.findByPk(rUser.id).then(async user => {
+        if (user.email !== req.body.email) {
+            if (0 < await User.count({ where: { email: req.body.email } })) {
                 req.flash("errors", { msg: "The email address you have entered is already associated with an account." });
                 return res.redirect("/account");
             }
-            next(err);
-        });
+        }
+
+        user.update({
+            email: req.body.email || ""
+        }).then(_user => {
+            Profile.update({
+                name: req.body.name || "",
+                gender: req.body.gender || "",
+                location: req.body.location || "",
+                website: req.body.website || ""
+            }, { where: { userId: _user.id } }).then(_profile => {
+                req.flash("success", { msg: "Profile information has been updated." });
+                res.redirect("/account");
+            }).error(err => next(err));
+        }).error(err => next(err));
     }).error(err => next(err));
 };
 
@@ -179,7 +188,7 @@ export const postUpdatePassword = (req: Request, res: Response, next: NextFuncti
     const rUser = req.user as User;
     User.findByPk(rUser.id).then(user => {
         user.update({
-            password: req.body.password
+            password: User.hashPassword(req.body.password)
         }).then(_user => {
             req.flash("success", { msg: "Password has been changed." });
             res.redirect("/account");
@@ -265,6 +274,7 @@ export const postReset = (req: Request, res: Response, next: NextFunction) => {
         return res.redirect("back");
     }
 
+    logger.debug(req.params.token);
     async.waterfall([
         function resetPassword(done: Function) {
             User.findOne({
@@ -280,7 +290,7 @@ export const postReset = (req: Request, res: Response, next: NextFunction) => {
                     return res.redirect("/forgot");
                 }
                 user.update({
-                    password: req.body.password,
+                    password: User.hashPassword(req.body.password),
                     passwordResetToken: null,
                     passwordResetExpires: null
                 }).then(_user => {
@@ -310,7 +320,9 @@ export const postReset = (req: Request, res: Response, next: NextFunction) => {
             });
         }
     ], (err) => {
-        if (err) { return next(err); }
+        if (err) {
+            return next(err);
+        }
         res.redirect("/");
     });
 };
@@ -344,6 +356,7 @@ export const postForgot = (req: Request, res: Response, next: NextFunction) => {
         return res.redirect("/forgot");
     }
 
+    logger.debug(req.params.token);
     async.waterfall([
         function createRandomToken(done: Function) {
             crypto.randomBytes(16, (err, buf) => {

@@ -3,6 +3,7 @@
 import graph from "fbgraph";
 import { Response, Request, NextFunction } from "express";
 import { User } from "../models/sequelize/User";
+import { AuthToken } from "../models/sequelize/AuthToken";
 
 /**
  * GET /api
@@ -20,13 +21,19 @@ export const getApi = (req: Request, res: Response) => {
  */
 export const getFacebook = (req: Request, res: Response, next: NextFunction) => {
     const rUser = req.user as User;
-    const token = rUser.tokens.find((token: any) => token.kind === "facebook");
-    graph.setAccessToken(token.tokenValue);
-    graph.get(`${rUser.facebook}?fields=id,name,email,first_name,last_name,gender,link,locale,timezone`, (err: Error, results: graph.FacebookUser) => {
-        if (err) { return next(err); }
-        res.render("api/facebook", {
-            title: "Facebook API",
-            profile: results
+    AuthToken.findOne({
+        where: {
+            userId: rUser.id,
+            kind: "facebook"
+        }
+    }).then(token => {
+        graph.setAccessToken(token.tokenValue);
+        graph.get(`${rUser.facebook}?fields=id,name,email,first_name,last_name,gender,link,locale,timezone`, (err: Error, results: graph.FacebookUser) => {
+            if (err) { return next(err); }
+            res.render("api/facebook", {
+                title: "Facebook API",
+                profile: results
+            });
         });
-    });
+    }).error(err => next(err));
 };

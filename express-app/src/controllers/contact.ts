@@ -36,6 +36,7 @@ export const postContact = (req: Request, res: Response) => {
         return res.redirect("/contact");
     }
 
+    //TODO: change email config
     const mailOptions = {
         to: "your@email.com",
         from: `${req.body.name} <${req.body.email}>`,

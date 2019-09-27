@@ -6,6 +6,7 @@ import { Request, Response, NextFunction } from "express";
 
 import { User } from "../models/sequelize/User";
 import { AuthToken } from "../models/sequelize/AuthToken";
+import { Profile } from "../models/sequelize/Profile";
 import logger from "../util/logger";
 
 const LocalStrategy = passportLocal.Strategy;
@@ -16,7 +17,11 @@ passport.serializeUser<any, any>((user, done) => {
 });
 
 passport.deserializeUser((id, done) => {
-    User.findByPk(id as string).done(done);
+    User.findByPk(id as string, {
+        include: [User.associations.profile],
+    }).then(user => {
+        done(null, user);
+    }).error(err => done(err));
 });
 
 /**
@@ -67,14 +72,18 @@ passport.use(new FacebookStrategy({
                 return done(err);
             }
 
-            User.findByPk(req.user.id).then(existingIdUser => {
-                existingIdUser.facebook = profile.id;
-                // eslint-disable-next-line @typescript-eslint/no-object-literal-type-assertion
-                existingIdUser.tokens.push({ userId: existingIdUser.id, kind: "facebook", tokenValue: accessToken, } as AuthToken);
-                existingIdUser.profile.name = existingIdUser.profile.name || `${profile.name.givenName} ${profile.name.familyName}`;
-                existingIdUser.profile.gender = existingIdUser.profile.gender || profile._json.gender;
-                existingIdUser.profile.picture = existingIdUser.profile.picture || `https://graph.facebook.com/${profile.id}/picture?type=large`;
-                existingIdUser.save().then(_existingIdUser => {
+            User.findByPk(req.user.id, {
+                include: [User.associations.profile],
+            }).then(existingIdUser => {
+                existingIdUser.update({
+                    facebook: profile.id
+                }).then(async _existingIdUser => {
+                    await _existingIdUser.createAuthToken({ userId: existingIdUser.id, kind: "facebook", tokenValue: accessToken, });
+                    await Profile.update({
+                        name: existingIdUser.profile.name || `${profile.name.givenName} ${profile.name.familyName}`,
+                        gender: existingIdUser.profile.gender || profile._json.gender,
+                        picture: existingIdUser.profile.picture || `https://graph.facebook.com/${profile.id}/picture?type=large`,
+                    }, { where: { userId: _existingIdUser.id } });
                     req.flash("info", { msg: "Facebook account has been linked." });
                     done(null, _existingIdUser);
                 });
@@ -92,15 +101,17 @@ passport.use(new FacebookStrategy({
                 }
                 User.create({
                     email: profile._json.email,
-                    facebook: profile.id,
-                    tokens: [{ kind: "facebook", accessToken }],
-                    profile: {
+                    facebook: profile.id
+                }).then(async user => {
+                    await user.createAuthToken({ userId: user.id, kind: "facebook", tokenValue: accessToken, });
+                    await user.createProfile({
                         name: `${profile.name.givenName} ${profile.name.familyName}`,
                         gender: profile._json.gender,
                         picture: `https://graph.facebook.com/${profile.id}/picture?type=large`,
                         location: (profile._json.location) ? profile._json.location.name : "",
-                    }
-                }).then(user => done(null, user)).error(err => done(err));
+                    });
+                    done(null, user);
+                }).error(err => done(err));
             }).error(err => done(err));
         }
     }).error(err => done(err));
@@ -121,11 +132,18 @@ export const isAuthenticated = (req: Request, res: Response, next: NextFunction)
  */
 export const isAuthorized = (req: Request, res: Response, next: NextFunction) => {
     const provider = req.path.split("/").slice(-1)[0];
-
     const rUser = req.user as User;
-    if (_.find(rUser.tokens, { kind: provider })) {
-        next();
-    } else {
-        res.redirect(`/auth/${provider}`);
-    }
+
+    AuthToken.findOne({
+        where: {
+            userId: rUser.id,
+            kind: provider
+        }
+    }).then(token => {
+        if (token == null) {
+            res.redirect(`/auth/${provider}`);
+        } else {
+            next();
+        }
+    }).error(() => res.redirect(`/auth/${provider}`));
 };

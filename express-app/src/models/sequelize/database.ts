@@ -74,7 +74,8 @@ User.hasMany(AuthToken, {
 });
 User.hasOne(Profile, {
     sourceKey: "id",
-    foreignKey: "userId"
+    foreignKey: "userId",
+    as: "profile"//for 'include: [User.associations.profile]'
 });
 
 export default database;
